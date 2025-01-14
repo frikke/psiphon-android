@@ -74,10 +74,19 @@
   <string name="region_name_ie">Ірландія</string>
   <string name="region_name_ke">Кенія</string>
   <string name="region_name_kr">Корея</string>
+  <string name="region_name_lt">Литва</string>
   <string name="region_name_lv">Латвія</string>
   <string name="region_name_mx">Мексика</string>
   <string name="region_name_tw">Тайвань</string>
   <string name="region_name_za">Південна Африка</string>
+  <string name="region_name_id">Індонезія</string>
+  <string name="region_name_nz">Нова Зеландія</string>
+  <string name="region_name_gr">Греція</string>
+  <string name="region_name_ua">Україна</string>
+  <string name="region_name_pt">Португалія</string>
+  <string name="region_name_hr">Хорватія</string>
+  <string name="region_name_co">Колумбія</string>
+  <string name="region_name_my">Малайзія</string>
   <string name="about">Про Psiphon</string>
   <string name="feedback">Відгуки</string>
   <string name="disableTimeoutsPreferenceSummary">Вимкнути час очікування для повільних мереж</string>
@@ -173,4 +182,8 @@
   <string name="unsafeTrafficAlertsOptInPreferenceTitle">Показувати сповіщення MalAware</string>
   <string name="unsafeTrafficAlertsOptInPreferenceSummary">Отримуйте сповіщення, коли Psiphon виявляє трафік зловмисного програмного забезпечення, що надходить з вашого пристрою.</string>
   <string name="aboutMalAware">Про зловмисне програмне забезпечення</string>
+  <!--Preference title for Psiphon Bump (NFC based connection data exchange), do not transliterate or translate 'Psiphon Bump'-->
+  <string name="nfcBumpPreferenceTitle">Увімкнути Psiphon Bump</string>
+  <!--Summary for Psiphon Bump preference-->
+  <string name="nfcBumpPreferenceSummary">Використовуйте NFC для обміну даними з\'єднання Psiphon з іншими пристроями.</string>
 </resources>

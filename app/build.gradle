@@ -1,7 +1,7 @@
 apply plugin: 'com.android.application'
 
 android {
-    compileSdkVersion 31
+    namespace 'com.psiphon3'
 
     def versionPropsFile = rootProject.file('version.properties')
 
@@ -13,15 +13,23 @@ android {
             def verName = props['VERSION_CODE']
             def verCode = verName.toInteger()
             defaultConfig {
-                project.ext.set("archivesBaseName", "PsiphonAndroid");
                 applicationId "com.psiphon3"
                 resValue "string", "tray__authority", "${applicationId}.tray"
                 minSdkVersion 14
-                targetSdkVersion 31
+                compileSdk 34
+                targetSdkVersion 34
                 versionCode verCode
                 versionName verName
                 testInstrumentationRunner "android.support.test.runner.AndroidJUnitRunner"
+                multiDexEnabled true
                 vectorDrawables.useSupportLibrary = true
+
+                // tun2socks NDK build configuration
+                externalNativeBuild {
+                    ndkBuild {
+                        cFlags "-DNDEBUG"
+                    }
+                }
             }
         } else {
             throw new GradleException('version.properties found but entries are missing')
@@ -34,16 +42,26 @@ android {
         release
     }
 
+    // Configure output APK file name
+    applicationVariants.configureEach { variant ->
+        variant.outputs.configureEach { output ->
+            def fileName = "PsiphonAndroid-${variant.buildType.name}.apk"
+            output.outputFileName = fileName
+        }
+    }
+
     buildTypes {
         debug {
             debuggable true
             pseudoLocalesEnabled true
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
         release {
             debuggable false
             ndk {
                 // ABI configurations of native libraries Gradle should package with the APK.
-                abiFilters 'armeabi-v7a'
+                abiFilters 'armeabi-v7a', 'arm64-v8a'
             }
             minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
@@ -64,6 +82,10 @@ android {
         targetCompatibility = '1.8'
     }
 
+    buildFeatures {
+        buildConfig true
+    }
+
     if (propFile.canRead()) {
         def Properties props = new Properties()
         props.load(new FileInputStream(propFile))
@@ -79,6 +101,15 @@ android {
         }
     } else {
         throw new GradleException('signing.properties not found!')
+    }
+
+    // For android 14 support we have to use ndk r17c or lower
+    ndkVersion '17.2.4988734'
+    externalNativeBuild {
+        ndkBuild {
+            // Path to the tun2socks NDK build script
+            path "src/main/jni/Android.mk"
+        }
     }
 
 }
@@ -121,4 +152,7 @@ dependencies {
 
     implementation "androidx.paging:paging-runtime:$rootProject.ext.pagingVersion"
     implementation "androidx.paging:paging-rxjava2:$rootProject.ext.pagingVersion"
+
+    implementation "com.google.android.gms:play-services-location:$rootProject.ext.locationServicesVersion"
+    implementation "com.github.drfonfon:android-geohash:$rootProject.ext.geoHashVersion"
 }

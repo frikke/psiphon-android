@@ -195,12 +195,12 @@ public class OptionsTabFragment extends PsiphonPreferenceFragmentCompat {
                     vpnOptionsPreference.setSummary(R.string.preference_routing_all_apps_tunnel_summary);
                     break;
                 case EXCLUDE_APPS:
-                    count = VpnAppsUtils.getCurrentAppsExcludedFromVpn(getContext()).size();
+                    count = VpnAppsUtils.getUserAppsExcludedFromVpn(getContext()).size();
                     summary = getResources().getQuantityString(R.plurals.preference_routing_select_apps_to_exclude_summary, count, count);
                     vpnOptionsPreference.setSummary(summary);
                     break;
                 case INCLUDE_APPS:
-                    count = VpnAppsUtils.getCurrentAppsIncludedInVpn(getContext()).size();
+                    count = VpnAppsUtils.getUserAppsIncludedInVpn(getContext()).size();
                     summary = getResources().getQuantityString(R.plurals.preference_routing_select_apps_to_include_summary, count, count);
                     vpnOptionsPreference.setSummary(summary);
                     break;
@@ -274,11 +274,14 @@ public class OptionsTabFragment extends PsiphonPreferenceFragmentCompat {
             // before the activity would relaunch. This *seems* to provide the best functionality across phones.
             // Add a 1 second delay to give activity chance to restart VPN service or command tunnel restart if needed.
             new Handler().postDelayed(() -> {
-                requireActivity().finish();
-                Intent intent = new Intent(requireActivity(), MainActivity.class);
-                intent.putExtra(MainActivity.INTENT_EXTRA_PREVENT_AUTO_START, true);
-                startActivity(intent);
-                System.exit(1);
+                FragmentActivity activity = getActivity();
+                if (activity != null && !activity.isFinishing()) {
+                    activity.finish();
+                    Intent intent = new Intent(activity, MainActivity.class);
+                    intent.putExtra(MainActivity.INTENT_EXTRA_PREVENT_AUTO_START, true);
+                    startActivity(intent);
+                    System.exit(1);
+                }
             }, restartMode != RestartMode.NONE ? 1000 : 0);
         }
     }
@@ -443,7 +446,8 @@ public class OptionsTabFragment extends PsiphonPreferenceFragmentCompat {
                 new SharedPreferencesImport(requireContext(), prefName, getString(R.string.preferenceNotificationsWithVibrate), getString(R.string.preferenceNotificationsWithVibrate)),
                 new SharedPreferencesImport(requireContext(), prefName, getString(R.string.downloadWifiOnlyPreference), getString(R.string.downloadWifiOnlyPreference)),
                 new SharedPreferencesImport(requireContext(), prefName, getString(R.string.unsafeTrafficAlertsPreference), getString(R.string.unsafeTrafficAlertsPreference)),
-                new SharedPreferencesImport(requireContext(), prefName, getString(R.string.disableTimeoutsPreference), getString(R.string.disableTimeoutsPreference))
+                new SharedPreferencesImport(requireContext(), prefName, getString(R.string.disableTimeoutsPreference), getString(R.string.disableTimeoutsPreference)),
+                new SharedPreferencesImport(requireContext(), prefName, getString(R.string.nfcBumpPreference), getString(R.string.nfcBumpPreference))
         );
     }
 }

@@ -14,6 +14,7 @@
     <string name="preferenceExcludeAppsFromVpn" translatable="false">preferenceExcludeAppsFromVpn</string>
     <string name="preferenceExcludeAppsFromVpnString" translatable="false">preferenceExcludeAppsFromVpnString</string>
     <string name="preferenceSelectApps" translatable="false">preferenceSelectApps</string>
+    <string name="preferenceDefaultExclusionsFooter" translatable="false">preferenceDefaultExclusionsFooter</string>
     <string name="preferenceAbout" translatable="false">preferenceAbout</string>
     <string name="preferenceAboutMalAware" translatable="false">preferenceAboutMalAware</string>
     <string name="AboutMalAwareLink" translatable="false">https://s3.amazonaws.com/psiphon/web/malaware.io/index.html</string>
@@ -33,6 +34,7 @@
     <string name="unsafeTrafficAlertsPreference" translatable="false">unsafeTrafficAlertsPreference</string>
     <string name="egressRegionPreference">egressRegionPreference</string>
     <string name="moreOptionsPreferencesName">moreOptionsPreferencesName</string>
+    <string name="nfcBumpPreference" translatable="false">nfcBumpPreference</string>
 
     <string name="upgrade_checker_service_name">Psiphon:UpgradeChecker</string>
 
@@ -46,6 +48,8 @@
     <string name="upgrade_notification_group" translatable="false">upgrade_notification_group</string>
     <string name="status_notification_group" translatable="false">status_notification_group</string>
     <string name="vpnServiceDataCollectionDisclosureAccepted" translatable="false">vpnServiceDataCollectionDisclosureAccepted</string>
+    <string name="deviceLocationPrecisionParameter" translatable="false">deviceLocationPrecision</string>
+    <string name="serviceRunningPreference" translatable="false">serviceRunningPreference</string>
 
     <string-array name="languages">
         <item>English,en</item>

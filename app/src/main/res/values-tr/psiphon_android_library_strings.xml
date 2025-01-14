@@ -74,10 +74,19 @@
   <string name="region_name_ie">Irlanda</string>
   <string name="region_name_ke">Kenya</string>
   <string name="region_name_kr">Kore</string>
+  <string name="region_name_lt">Litvanya</string>
   <string name="region_name_lv">Letonya</string>
   <string name="region_name_mx">Meksika</string>
   <string name="region_name_tw">Tayvan</string>
   <string name="region_name_za">Güney Afrika</string>
+  <string name="region_name_id">Endonezya</string>
+  <string name="region_name_nz">Yeni Zelanda</string>
+  <string name="region_name_gr">Yunanistan</string>
+  <string name="region_name_ua">Ukrayna</string>
+  <string name="region_name_pt">Portekiz</string>
+  <string name="region_name_hr">Hırvatistan</string>
+  <string name="region_name_co">Kolombiya</string>
+  <string name="region_name_my">Malezya</string>
   <string name="about">Psiphon hakkında</string>
   <string name="feedback">Geri bildirim</string>
   <string name="disableTimeoutsPreferenceSummary">Yavaş bağlantılarda zaman aşımı kullanılmasın</string>
@@ -165,4 +174,8 @@
   <string name="unsafeTrafficAlertsOptInPreferenceTitle">MalAware uyarıları görüntülensin</string>
   <string name="unsafeTrafficAlertsOptInPreferenceSummary">Psiphon, aygıtnızdan kaynaklanan zararlı yazılım trafiği algıladığında bildirim alın.</string>
   <string name="aboutMalAware">MalAware hakkında</string>
+  <!--Preference title for Psiphon Bump (NFC based connection data exchange), do not transliterate or translate 'Psiphon Bump'-->
+  <string name="nfcBumpPreferenceTitle">Psiphon Bump kullanılsın</string>
+  <!--Summary for Psiphon Bump preference-->
+  <string name="nfcBumpPreferenceSummary">Psiphon bağlantı bilgilerini NFC üzerinden diğer aygıtlar ile paylaşın.</string>
 </resources>

@@ -21,6 +21,7 @@ package com.psiphon3.psiphonlibrary;
 
 import static android.os.Build.VERSION_CODES.LOLLIPOP;
 
+import android.Manifest;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -30,6 +31,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.pm.ServiceInfo;
 import android.net.VpnService;
 import android.net.VpnService.Builder;
 import android.os.Build;
@@ -44,11 +46,15 @@ import android.util.Pair;
 
 import androidx.annotation.NonNull;
 import androidx.core.app.NotificationCompat;
+import androidx.core.content.ContextCompat;
+import androidx.core.content.PermissionChecker;
 
 import com.jakewharton.rxrelay2.PublishRelay;
+import com.psiphon3.Location;
 import com.psiphon3.PsiphonCrashService;
 import com.psiphon3.R;
 import com.psiphon3.TunnelState;
+import com.psiphon3.VpnManager;
 import com.psiphon3.log.MyLog;
 
 import net.grandcentrix.tray.AppPreferences;
@@ -80,7 +86,7 @@ import io.reactivex.functions.BiFunction;
 import io.reactivex.schedulers.Schedulers;
 import ru.ivanarh.jndcrash.NDCrash;
 
-public class TunnelManager implements PsiphonTunnel.HostService {
+public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnServiceBuilderProvider {
     // Android IPC messages
     // Client -> Service
     enum ClientToServiceMessage {
@@ -89,6 +95,8 @@ public class TunnelManager implements PsiphonTunnel.HostService {
         STOP_SERVICE,
         RESTART_TUNNEL,
         CHANGED_LOCALE,
+        NFC_CONNECTION_INFO_EXCHANGE_IMPORT,
+        NFC_CONNECTION_INFO_EXCHANGE_EXPORT,
     }
 
     // Service -> Client
@@ -96,6 +104,7 @@ public class TunnelManager implements PsiphonTunnel.HostService {
         TUNNEL_CONNECTION_STATE,
         DATA_TRANSFER_STATS,
         PING,
+        NFC_CONNECTION_INFO_EXCHANGE_EXPORT,
     }
 
     public static final String INTENT_ACTION_VIEW = "ACTION_VIEW";
@@ -124,6 +133,7 @@ public class TunnelManager implements PsiphonTunnel.HostService {
     static final String DATA_TRANSFER_STATS_FAST_BUCKETS_LAST_START_TIME = "dataTransferStatsFastBucketsLastStartTime";
     public static final String DATA_UNSAFE_TRAFFIC_SUBJECTS_LIST = "dataUnsafeTrafficSubjects";
     public static final String DATA_UNSAFE_TRAFFIC_ACTION_URLS_LIST = "dataUnsafeTrafficActionUrls";
+    public static final String DATA_NFC_CONNECTION_INFO_EXCHANGE = "dataNfcConnectionInfoExchange";
 
     void updateNotifications() {
         postServiceNotification(false, m_tunnelState.networkConnectionState);
@@ -134,6 +144,7 @@ public class TunnelManager implements PsiphonTunnel.HostService {
         String egressRegion = PsiphonConstants.REGION_CODE_ANY;
         boolean disableTimeouts = false;
         String sponsorId = EmbeddedValues.SPONSOR_ID;
+        String deviceLocation = "";
     }
 
     private Config m_tunnelConfig;
@@ -173,6 +184,7 @@ public class TunnelManager implements PsiphonTunnel.HostService {
     private Thread m_tunnelThread;
     private final AtomicBoolean m_isStopping;
     private PsiphonTunnel m_tunnel;
+    private VpnManager m_vpnManager = VpnManager.getInstance();
     private String m_lastUpstreamProxyErrorMessage;
     private Handler m_Handler = new Handler();
 
@@ -192,11 +204,17 @@ public class TunnelManager implements PsiphonTunnel.HostService {
         m_context = parentService;
         m_isStopping = new AtomicBoolean(false);
         unsafeTrafficSubjects = new ArrayList<>();
-        // Note that we are requesting manual control over PsiphonTunnel.routeThroughTunnel() functionality.
-        m_tunnel = PsiphonTunnel.newPsiphonTunnel(this, false);
     }
 
     void onCreate() {
+        // Defer initialization of the PsiphonTunnel instance to onCreate(). Ensures a valid context
+        // passed via hostService is available for potential Context-dependent operations that the
+        // PsiphonTunnel may perform internally at any time.
+        m_tunnel = PsiphonTunnel.newPsiphonTunnel(this);
+
+        // Register self as a host service for the VPN manager
+        m_vpnManager.registerHostService(this);
+
         m_notificationPendingIntent = getPendingIntent(m_parentService, INTENT_ACTION_VIEW);
 
         if (mNotificationManager == null) {
@@ -220,8 +238,14 @@ public class TunnelManager implements PsiphonTunnel.HostService {
             }
         }
 
-        m_parentService.startForeground(R.string.psiphon_service_notification_id,
-                createNotification(false, TunnelState.ConnectionData.NetworkConnectionState.CONNECTING));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            m_parentService.startForeground(R.string.psiphon_service_notification_id,
+                    createNotification(false, TunnelState.ConnectionData.NetworkConnectionState.CONNECTING),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+        } else {
+            m_parentService.startForeground(R.string.psiphon_service_notification_id,
+                    createNotification(false, TunnelState.ConnectionData.NetworkConnectionState.CONNECTING));
+        }
 
         m_tunnelState.isRunning = true;
         // This service runs as a separate process, so it needs to initialize embedded values
@@ -254,6 +278,13 @@ public class TunnelManager implements PsiphonTunnel.HostService {
                                 m_tunnelThread.start();
                             })
                             .subscribe());
+
+            // Set the persistent service running flag to true.
+            // This flag is used to determine whether the service should be automatically restarted
+            // after an app update, upon receiving a package replaced broadcast in the PsiphonUpdateReceiver.
+            new AppPreferences(getContext()).put(getContext().getString(R.string.serviceRunningPreference), true);
+
+
         }
         return Service.START_REDELIVER_INTENT;
     }
@@ -275,7 +306,7 @@ public class TunnelManager implements PsiphonTunnel.HostService {
                     if (networkConnectionState == TunnelState.ConnectionData.NetworkConnectionState.CONNECTED && !isRoutingThroughTunnel) {
                         if (m_tunnelState.homePages != null && m_tunnelState.homePages.size() != 0) {
                             if (canSendIntentToActivity()) {
-                                m_tunnel.routeThroughTunnel();
+                                m_vpnManager.routeThroughTunnel(m_tunnel.getLocalSocksProxyPort());
                                 sendHandshakeIntent();
                                 m_isRoutingThroughTunnelPublishRelay.accept(Boolean.TRUE);
                                 // Do not emit downstream if we are just started routing.
@@ -287,7 +318,7 @@ public class TunnelManager implements PsiphonTunnel.HostService {
                                     .startWith(TunnelState.ConnectionData.NetworkConnectionState.CONNECTING);
                         }
                         // No intents to send, just route through tunnel.
-                        m_tunnel.routeThroughTunnel();
+                        m_vpnManager.routeThroughTunnel(m_tunnel.getLocalSocksProxyPort());
                         m_isRoutingThroughTunnelPublishRelay.accept(Boolean.TRUE);
                         // Do not emit downstream if we are just started routing.
                         return Observable.empty();
@@ -314,7 +345,7 @@ public class TunnelManager implements PsiphonTunnel.HostService {
                 .ignoreElements()
                 .doOnSubscribe(__ -> showOpenAppToFinishConnectingNotification())
                 .doOnComplete(() -> {
-                    m_tunnel.routeThroughTunnel();
+                    m_vpnManager.routeThroughTunnel(m_tunnel.getLocalSocksProxyPort());
                     runnable.run();
                     m_isRoutingThroughTunnelPublishRelay.accept(Boolean.TRUE);
                 })
@@ -362,6 +393,8 @@ public class TunnelManager implements PsiphonTunnel.HostService {
 
         stopAndWaitForTunnel();
         m_compositeDisposable.dispose();
+        // Unregister host service for the VPN manager
+        m_vpnManager.unregisterHostService();
     }
 
     void onRevoke() {
@@ -403,10 +436,12 @@ public class TunnelManager implements PsiphonTunnel.HostService {
             return;
         }
 
-        // signalStopService could have been called, but in case is was not, call here.
-        // If signalStopService was not already called, the join may block the calling
-        // thread for some time.
-        signalStopService();
+        // The `signalStopService`, which performs the latch countdown, may have already been called.
+        // If it has not been called, then manually attempt to count down the latch here.
+        // If the countdown hasn't been initiated, the `join` call may block the calling thread, potentially delaying execution.
+        if (m_tunnelThreadStopSignal != null) {
+            m_tunnelThreadStopSignal.countDown();
+        }
 
         try {
             m_tunnelThread.join();
@@ -426,6 +461,8 @@ public class TunnelManager implements PsiphonTunnel.HostService {
         if (m_tunnelThreadStopSignal != null) {
             m_tunnelThreadStopSignal.countDown();
         }
+        // Also set the persistent service running flag to false to prevent automatic restart upon app update.
+        new AppPreferences(getContext()).put(getContext().getString(R.string.serviceRunningPreference), false);
     }
 
     private PendingIntent getPendingIntent(Context ctx, final String actionString) {
@@ -460,8 +497,9 @@ public class TunnelManager implements PsiphonTunnel.HostService {
     }
 
     private Single<Config> getTunnelConfigSingle() {
+        final AppPreferences multiProcessPreferences = new AppPreferences(getContext());
+
         Single<Config> configSingle = Single.fromCallable(() -> {
-            final AppPreferences multiProcessPreferences = new AppPreferences(getContext());
             Config tunnelConfig = new Config();
             tunnelConfig.egressRegion = multiProcessPreferences
                     .getString(getContext().getString(R.string.egressRegionPreference),
@@ -472,7 +510,21 @@ public class TunnelManager implements PsiphonTunnel.HostService {
             return tunnelConfig;
         });
 
-        return configSingle;
+        int deviceLocationPrecision = multiProcessPreferences
+                .getInt(getContext().getString(R.string.deviceLocationPrecisionParameter),
+                        0);
+
+        Single<String> geoHashSingle =
+                Location.getGeoHashSingle(getContext(), deviceLocationPrecision, 1000)
+                        .onErrorReturnItem("");
+
+        BiFunction<Config, String, Config> zipper =
+                (config, deviceLocation) -> {
+                    config.deviceLocation = deviceLocation;
+                    return config;
+                };
+
+        return Single.zip(configSingle, geoHashSingle, zipper);
     }
 
     private Notification createNotification(
@@ -690,7 +742,7 @@ public class TunnelManager implements PsiphonTunnel.HostService {
                         manager.m_compositeDisposable.add(
                                 manager.getTunnelConfigSingle()
                                         .doOnSuccess(config -> {
-                                            manager.m_tunnel.stopRouteThroughTunnel();
+                                            manager.m_vpnManager.stopRouteThroughTunnel();
                                             manager.m_isRoutingThroughTunnelPublishRelay.accept(Boolean.FALSE);
                                             manager.setTunnelConfig(config);
                                             manager.onRestartTunnel();
@@ -708,6 +760,32 @@ public class TunnelManager implements PsiphonTunnel.HostService {
                         setLocale(manager);
                     }
                     break;
+
+                case NFC_CONNECTION_INFO_EXCHANGE_EXPORT:
+                    if (manager != null) {
+                        MessengerWrapper client = manager.mClients.get(msg.replyTo.hashCode());
+                        if (client != null) {
+                            String exportExchangePayload = manager.m_tunnel.exportExchangePayload();
+                            Bundle bundle = new Bundle();
+                            bundle.putString(DATA_NFC_CONNECTION_INFO_EXCHANGE, exportExchangePayload);
+                            Message message = manager.composeClientMessage(
+                                    ServiceToClientMessage.NFC_CONNECTION_INFO_EXCHANGE_EXPORT.ordinal(),
+                                    bundle);
+                            try {
+                                client.send(message);
+                            } catch (RemoteException ignored) {
+                            }
+                        }
+                    }
+                    break;
+
+                    case NFC_CONNECTION_INFO_EXCHANGE_IMPORT:
+                        if (manager != null) {
+                            Bundle bundle = msg.getData();
+                            String importExchangePayload = bundle.getString(DATA_NFC_CONNECTION_INFO_EXCHANGE);
+                            manager.m_tunnel.importExchangePayload(importExchangePayload);
+                        }
+                        break;
 
                 default:
                     super.handleMessage(msg);
@@ -850,18 +928,20 @@ public class TunnelManager implements PsiphonTunnel.HostService {
         sendDataTransferStatsHandler.postDelayed(sendDataTransferStats, sendDataTransferStatsIntervalMs);
 
         try {
-            if (!m_tunnel.startRouting()) {
-                throw new PsiphonTunnel.Exception("application is not prepared or revoked");
-            }
+            m_vpnManager.vpnEstablish();
             MyLog.i(R.string.vpn_service_running, MyLog.Sensitivity.NOT_SENSITIVE);
 
+            m_tunnel.setVpnMode(true);
             m_tunnel.startTunneling(getServerEntries(m_parentService));
             try {
                 m_tunnelThreadStopSignal.await();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
-        } catch (PsiphonTunnel.Exception e) {
+        } catch (IllegalStateException |
+                 IllegalArgumentException |
+                 SecurityException |
+                 PsiphonTunnel.Exception e) {
             String errorMessage = e.getMessage();
             MyLog.e(R.string.start_tunnel_failed, MyLog.Sensitivity.NOT_SENSITIVE, errorMessage);
             if ((errorMessage.startsWith("get package uid:") || errorMessage.startsWith("getPackageUid:"))
@@ -873,6 +953,8 @@ public class TunnelManager implements PsiphonTunnel.HostService {
 
             m_isStopping.set(true);
             m_networkConnectionStatePublishRelay.accept(TunnelState.ConnectionData.NetworkConnectionState.CONNECTING);
+            m_isRoutingThroughTunnelPublishRelay.accept(false);
+            m_vpnManager.vpnTeardown();
             m_tunnel.stop();
 
             sendDataTransferStatsHandler.removeCallbacks(sendDataTransferStats);
@@ -900,23 +982,25 @@ public class TunnelManager implements PsiphonTunnel.HostService {
     }
 
     @Override
-    public String getAppName() {
-        return m_parentService.getString(R.string.app_name);
-    }
-
-    @Override
     public Context getContext() {
         return m_context;
     }
 
     @Override
-    public VpnService getVpnService() {
-        return ((TunnelVpnService) m_parentService);
+    public void bindToDevice(long fileDescriptor) {
+        if (m_parentService instanceof VpnService) {
+            if (!((VpnService) m_parentService).protect((int) fileDescriptor)) {
+                throw new RuntimeException("VpnService.protect() failed");
+            }
+        }
     }
 
     @Override
-    public Builder newVpnServiceBuilder() {
-        Builder vpnBuilder = ((TunnelVpnService) m_parentService).newBuilder();
+    public Builder vpnServiceBuilder() {
+        // Create a new VpnService.Builder instance and set the session name to the app name^M
+        Builder vpnBuilder = ((VpnService) m_parentService)
+                .new Builder()
+                .setSession(getContext().getString(R.string.app_name));
         // only can control tunneling post lollipop
         if (Build.VERSION.SDK_INT < LOLLIPOP) {
             return vpnBuilder;
@@ -934,81 +1018,186 @@ public class TunnelManager implements PsiphonTunnel.HostService {
 
         Context context = getContext();
         PackageManager pm = context.getPackageManager();
+        AppSignatureVerifier verifier = new AppSignatureVerifier(context);
 
         switch (VpnAppsUtils.getVpnAppsExclusionMode(context)) {
             case ALL_APPS:
                 vpnAppsExclusionSetting = VpnAppsUtils.VpnAppsExclusionSetting.ALL_APPS;
                 vpnAppsExclusionCount = 0;
-                MyLog.i(R.string.no_apps_excluded, MyLog.Sensitivity.SENSITIVE_FORMAT_ARGS);
                 break;
 
             case INCLUDE_APPS:
-                Set<String> includedApps = VpnAppsUtils.getCurrentAppsIncludedInVpn(context);
+                Set<String> includedApps = VpnAppsUtils.getUserAppsIncludedInVpn(context);
                 int includedAppsCount = includedApps.size();
                 // allow the selected apps
                 for (Iterator<String> iterator = includedApps.iterator(); iterator.hasNext(); ) {
                     String packageId = iterator.next();
+                    // VpnBuilder.addAllowedApplication() is supposed to throw NameNotFoundException
+                    // in case the app is no longer available but we observed this is not the case.
+                    // Therefore we will perform our own check first
+                    if (!VpnAppsUtils.isAppInstalled(pm, packageId)) {
+                        // If the app is no longer installed, remove it from the list
+                        iterator.remove();
+                        continue;
+                    }
+
                     try {
-                        // VpnBuilder.addAllowedApplication() is supposed to throw NameNotFoundException
-                        // in case the app is no longer available but we observed this is not the case.
-                        // Therefore we will perform our own check first.
-                        pm.getApplicationInfo(packageId, 0);
                         vpnBuilder.addAllowedApplication(packageId);
                         MyLog.i(R.string.individual_app_included, MyLog.Sensitivity.SENSITIVE_FORMAT_ARGS, packageId);
                     } catch (PackageManager.NameNotFoundException e) {
                         iterator.remove();
+                        MyLog.w("Failed to add package to allowed VPN applications: " + packageId);
                     }
                 }
                 // If some packages are no longer installed, updated persisted set
                 if (includedAppsCount != includedApps.size()) {
-                    VpnAppsUtils.setCurrentAppsToIncludeInVpn(context, includedApps);
+                    VpnAppsUtils.setUserAppsToIncludeInVpn(context, includedApps);
                     includedAppsCount = includedApps.size();
                 }
-                // If we run in this mode and there at least one allowed app then add ourselves too
+
                 if (includedAppsCount > 0) {
+                    // If there are included apps, set the exclusion mode to INCLUDE_APPS
+                    // and add the default included apps to the list
+                    vpnAppsExclusionSetting = VpnAppsUtils.VpnAppsExclusionSetting.INCLUDE_APPS;
+                    Set<String> defaultIncludedApps = VpnAppsUtils.getDefaultAppsIncludedInVpn();
+                    for (String packageId : defaultIncludedApps) {
+                        // Check if the app is installed before checking the signature
+                        if (!VpnAppsUtils.isAppInstalled(pm, packageId)) {
+                            continue;
+                        }
+
+                        String expectedSignature = VpnAppsUtils.getExpectedSignatureForPackage(packageId);
+                        if (expectedSignature != null && verifier.isSignatureValid(packageId, expectedSignature)) {
+                            try {
+                                vpnBuilder.addAllowedApplication(packageId);
+                                // Output the package name of the app that is included by default; do not update the count
+                                MyLog.i(R.string.individual_app_included, MyLog.Sensitivity.SENSITIVE_FORMAT_ARGS,
+                                        packageId);
+                            } catch (PackageManager.NameNotFoundException e) {
+                                MyLog.w("Failed to add package to allowed VPN applications: " + packageId);
+                            }
+                        } else {
+                            MyLog.w("Signature verification failed for package: " + packageId);
+                        }
+                    }
+
+                    // Also always include the Psiphon app itself in this mode
+                    // Note that we are not checking if the app is installed here, we trust that self is always installed
                     try {
                         vpnBuilder.addAllowedApplication(context.getPackageName());
+                        MyLog.i(R.string.individual_app_included, MyLog.Sensitivity.SENSITIVE_FORMAT_ARGS,
+                                context.getPackageName());
                     } catch (PackageManager.NameNotFoundException e) {
-                        // this should never be thrown
+                        MyLog.w("Failed to add package to allowed VPN applications: " + context.getPackageName());
                     }
-                    vpnAppsExclusionSetting = VpnAppsUtils.VpnAppsExclusionSetting.INCLUDE_APPS;
-                    vpnAppsExclusionCount = includedAppsCount;
                 } else {
-                    // There's no included apps, we're tunnelling all
+                    // If there are no apps to include, set the exclusion mode to ALL_APPS
+                    // Note that we will be excluding default excluded apps in this case later.
                     vpnAppsExclusionSetting = VpnAppsUtils.VpnAppsExclusionSetting.ALL_APPS;
-                    vpnAppsExclusionCount = 0;
-                    MyLog.i(R.string.no_apps_excluded, MyLog.Sensitivity.SENSITIVE_FORMAT_ARGS);
                 }
+
+                vpnAppsExclusionCount = includedAppsCount;
                 break;
 
             case EXCLUDE_APPS:
-                Set<String> excludedApps = VpnAppsUtils.getCurrentAppsExcludedFromVpn(context);
+                Set<String> excludedApps = VpnAppsUtils.getUserAppsExcludedFromVpn(context);
                 int excludedAppsCount = excludedApps.size();
                 // disallow the selected apps
                 for (Iterator<String> iterator = excludedApps.iterator(); iterator.hasNext(); ) {
                     String packageId = iterator.next();
+                    // VpnBuilder.addDisallowedApplication() is supposed to throw NameNotFoundException
+                    // in case the app is no longer available but we observed this is not the case.
+                    // Therefore we will perform our own check first.
+                    if (!VpnAppsUtils.isAppInstalled(pm, packageId)) {
+                        // If the app is no longer installed, remove it from the list
+                        iterator.remove();
+                        continue;
+                    }
+
                     try {
-                        // VpnBuilder.addDisallowedApplication() is supposed to throw NameNotFoundException
-                        // in case the app is no longer available but we observed this is not the case.
-                        // Therefore we will perform our own check first.
-                        pm.getApplicationInfo(packageId, 0);
                         vpnBuilder.addDisallowedApplication(packageId);
-                        MyLog.i(R.string.individual_app_excluded, MyLog.Sensitivity.SENSITIVE_FORMAT_ARGS, packageId);
+                        MyLog.i(R.string.individual_app_excluded, MyLog.Sensitivity.SENSITIVE_FORMAT_ARGS,
+                                packageId);
                     } catch (PackageManager.NameNotFoundException e) {
                         iterator.remove();
+                        MyLog.w("Failed to add package to disallowed VPN applications: " + packageId);
                     }
                 }
                 // If some packages are no longer installed update persisted set
                 if (excludedAppsCount != excludedApps.size()) {
-                    VpnAppsUtils.setCurrentAppsToExcludeFromVpn(context, excludedApps);
+                    VpnAppsUtils.setUserAppsToExcludeFromVpn(context, excludedApps);
                     excludedAppsCount = excludedApps.size();
                 }
-                if (excludedAppsCount == 0) {
-                    MyLog.i(R.string.no_apps_excluded, MyLog.Sensitivity.SENSITIVE_FORMAT_ARGS);
+
+                if (excludedAppsCount > 0) {
+                    // If there are excluded apps, set the exclusion mode to EXCLUDE_APPS
+                    // and add the default excluded apps to the list
+                    vpnAppsExclusionSetting = VpnAppsUtils.VpnAppsExclusionSetting.EXCLUDE_APPS;
+                    Set<String> defaultExcludedApps = VpnAppsUtils.getDefaultAppsExcludedFromVpn();
+
+                    for (String packageId : defaultExcludedApps) {
+                        // Check if the app is installed before checking the signature
+                        if (!VpnAppsUtils.isAppInstalled(pm, packageId)) {
+                            continue;
+                        }
+
+                        String expectedSignature = VpnAppsUtils.getExpectedSignatureForPackage(packageId);
+                        if (expectedSignature != null && verifier.isSignatureValid(packageId, expectedSignature)) {
+                            try {
+                                vpnBuilder.addDisallowedApplication(packageId);
+                                // Output the package name of the app that is excluded by default; do not update the count
+                                MyLog.i(R.string.individual_app_excluded, MyLog.Sensitivity.SENSITIVE_FORMAT_ARGS,
+                                        packageId);
+                            } catch (PackageManager.NameNotFoundException e) {
+                                MyLog.w("Failed to add package to disallowed VPN applications: " + packageId);
+                            }
+                        } else {
+                            MyLog.w("Signature verification failed for package: " + packageId);
+                        }
+                    }
+                } else {
+                    // If there are no apps to exclude, set the exclusion mode to ALL_APPS
+                    // Note that we will be excluding default excluded apps in this case later.
+                    vpnAppsExclusionSetting = VpnAppsUtils.VpnAppsExclusionSetting.ALL_APPS;
                 }
-                vpnAppsExclusionSetting = VpnAppsUtils.VpnAppsExclusionSetting.EXCLUDE_APPS;
+
                 vpnAppsExclusionCount = excludedAppsCount;
                 break;
+        }
+
+        // If we are in ALL_APPS mode then disallow apps that should not be tunneled by default if the device supports
+        // VPN exclusions.
+        if (vpnAppsExclusionSetting == VpnAppsUtils.VpnAppsExclusionSetting.ALL_APPS) {
+            if (Utils.supportsVpnExclusions()) {
+                Set<String> defaultExcludedApps = VpnAppsUtils.getDefaultAppsExcludedFromVpn();
+                // If there are no default excluded apps, output no apps excluded message
+                if (defaultExcludedApps.isEmpty()) {
+                    MyLog.i(R.string.no_apps_excluded, MyLog.Sensitivity.SENSITIVE_FORMAT_ARGS);
+                } else {
+                    for (String packageId : defaultExcludedApps) {
+                        // Check if the app is installed before checking the signature
+                        if (!VpnAppsUtils.isAppInstalled(pm, packageId)) {
+                            continue;
+                        }
+                        String expectedSignature = VpnAppsUtils.getExpectedSignatureForPackage(packageId);
+                        if (expectedSignature != null && verifier.isSignatureValid(packageId, expectedSignature)) {
+                            try {
+                                vpnBuilder.addDisallowedApplication(packageId);
+                                // Output the package name of the app that is excluded
+                                MyLog.i(R.string.individual_app_excluded, MyLog.Sensitivity.SENSITIVE_FORMAT_ARGS,
+                                        packageId);
+                            } catch (PackageManager.NameNotFoundException e) {
+                                MyLog.w("Failed to add package to disallowed VPN applications: " + packageId);
+                            }
+                        } else {
+                            MyLog.w("Signature verification failed for package: " + packageId);
+                        }
+                    }
+                }
+            } else {
+                // If the device does not support VPN exclusions, output no apps excluded message
+                MyLog.i(R.string.no_apps_excluded, MyLog.Sensitivity.SENSITIVE_FORMAT_ARGS);
+            }
         }
 
         return vpnBuilder;
@@ -1045,6 +1234,8 @@ public class TunnelManager implements PsiphonTunnel.HostService {
                 json.put("UpgradeDownloadURLs", new JSONArray(EmbeddedValues.UPGRADE_URLS_JSON));
 
                 json.put("UpgradeDownloadClientVersionHeader", "x-amz-meta-psiphon-client-version");
+
+                json.put("EnableUpgradeDownload", true);
             }
 
             json.put("MigrateUpgradeDownloadFilename",
@@ -1078,6 +1269,9 @@ public class TunnelManager implements PsiphonTunnel.HostService {
 
             json.put("FeedbackUploadURLs", new JSONArray(EmbeddedValues.FEEDBACK_DIAGNOSTIC_INFO_UPLOAD_URLS_JSON));
             json.put("FeedbackEncryptionPublicKey", EmbeddedValues.FEEDBACK_ENCRYPTION_PUBLIC_KEY);
+            json.put("EnableFeedbackUpload", true);
+
+            json.put("AdditionalParameters", EmbeddedValues.ADDITIONAL_PARAMETERS);
 
             // If this is a temporary tunnel (like for UpgradeChecker) we need to override some of
             // the implicit config values.
@@ -1126,11 +1320,30 @@ public class TunnelManager implements PsiphonTunnel.HostService {
 
             json.put("EmitServerAlerts", true);
 
+            JSONArray clientFeaturesJsonArray = new JSONArray();
+
+            AppPreferences mp = new AppPreferences(context);
+            int deviceLocationPrecision = mp.getInt(context.getString(R.string.deviceLocationPrecisionParameter), 0);
+            if (deviceLocationPrecision > 0) {
+                if (ContextCompat.checkSelfPermission(context,
+                        Manifest.permission.ACCESS_COARSE_LOCATION) == PermissionChecker.PERMISSION_GRANTED) {
+                    clientFeaturesJsonArray.put("coarse-location");
+                }
+            }
             if (Utils.getUnsafeTrafficAlertsOptInState(context)) {
-                json.put("ClientFeatures", new JSONArray("[\"unsafe-traffic-alerts\"]"));
+                clientFeaturesJsonArray.put("unsafe-traffic-alerts");
+            }
+            if (clientFeaturesJsonArray.length() > 0) {
+                json.put("ClientFeatures", clientFeaturesJsonArray);
             }
 
             json.put("DNSResolverAlternateServers", new JSONArray("[\"1.1.1.1\", \"1.0.0.1\", \"8.8.8.8\", \"8.8.4.4\"]"));
+
+            if (!TextUtils.isEmpty(tunnelConfig.deviceLocation)) {
+                json.put("DeviceLocation", tunnelConfig.deviceLocation);
+            }
+
+            json.put("EmitBytesTransferred", true);
 
             return json.toString();
         } catch (JSONException e) {
@@ -1497,5 +1710,12 @@ public class TunnelManager implements PsiphonTunnel.HostService {
                 });
             }
         }
+    }
+
+    @Override
+    public void onApplicationParameters(@NonNull Object o) {
+        int deviceLocationPrecision = ((JSONObject) o).optInt("DeviceLocationPrecision");
+        final AppPreferences mp = new AppPreferences(getContext());
+        mp.put(m_parentService.getString(R.string.deviceLocationPrecisionParameter), deviceLocationPrecision);
     }
 }

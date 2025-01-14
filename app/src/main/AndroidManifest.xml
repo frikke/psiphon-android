@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
-    package="com.psiphon3"
     android:installLocation="auto">
     <uses-sdk tools:overrideLibrary="ca.psiphon"></uses-sdk>
 
@@ -10,14 +9,15 @@
                   android:normalScreens="true"
                   android:largeScreens="true"
                   android:xlargeScreens="true" />
-
+    <!--Apps targeting Android 13 (SDK 33) and above are required to declare POST_NOTIFICATIONS permission -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
     <!-- required for targetSdk 30+ to show all apps in the VPN exclusions dialog -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
-    <!-- instruct manifest merger to remove any location permissions from the final manifest -->
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" tools:node="remove"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- instruct manifest merger to remove fine location permissions from the final manifest -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" tools:node="remove"/>
     <!-- instruct manifest merger to remove any external storage permissions from the final manifest -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" tools:node="remove"/>
@@ -26,7 +26,11 @@
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+    <uses-permission android:name="android.permission.NFC" />
+    <uses-feature android:name="android.hardware.nfc.hce" android:required="false"/>
+    <uses-feature android:name="android.hardware.nfc" android:required="false"/>
 
     <application
         android:name=".PsiphonApplication"
@@ -38,7 +42,7 @@
         android:theme="@style/Theme.AppCompat"
         android:supportsRtl="true"
         android:label="@string/app_name"
-        android:usesCleartextTraffic="true"
+        android:usesCleartextTraffic="false"
         tools:ignore="GoogleAppIndexingWarning"
         tools:replace="android:fullBackupContent">
 
@@ -107,16 +111,29 @@
                 android:name="android.support.PARENT_ACTIVITY"
                 android:value=".MainActivity" />
         </activity>
+        <activity android:theme="@style/Theme.DialogAlert"
+            android:excludeFromRecents="true"
+            android:name=".NotificationPermissionRationaleActivity" />
+        <activity android:theme="@style/Theme.DialogAlert"
+            android:excludeFromRecents="true"
+            android:name=".LocationPermissionRationaleActivity" />
         <service
             android:name=".PsiphonCrashService"
             android:exported="false"
             android:process=":PsiphonCrashService" />
+        <activity android:theme="@style/Theme.DialogAlert"
+            android:name=".PsiphonBumpNfcReaderActivity" >
+        </activity>
+        <activity
+            android:name=".PsiphonBumpHelpActivity" />
         <service
             android:name=".psiphonlibrary.TunnelVpnService"
+            android:foregroundServiceType="specialUse"
             android:label="@string/app_name"
             android:permission="android.permission.BIND_VPN_SERVICE"
             android:exported="false"
             android:process=":TunnelVpnService" >
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="vpn" />
             <intent-filter>
                 <action android:name="android.net.VpnService" />
             </intent-filter>
@@ -124,11 +141,30 @@
                 android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON"
                 android:value="true" />
         </service>
+        <!-- HCE service for Psiphon Bump -->
+        <service
+            android:name=".PsiphonHostApduService"
+            android:exported="true"
+            android:permission="android.permission.BIND_NFC_SERVICE">
+            <intent-filter>
+                <action android:name="android.nfc.cardemulation.action.HOST_APDU_SERVICE"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+            </intent-filter>
+            <meta-data android:name="android.nfc.cardemulation.host_apdu_service"
+                android:resource="@xml/apduservice"/>
+        </service>
         <provider
             android:name=".log.LoggingContentProvider"
             android:exported="false"
             android:process=":LoggingContentProvider"
             android:authorities="com.psiphon3.LoggingContentProvider" />
+        <!-- PsiphonUpdateReceiver receives intents that trigger upgrade checking. -->
+        <receiver android:name=".PsiphonUpdateReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!-- UpgradeChecker receives intents (direct, alarm, boot) that trigger upgrade checking. -->
         <receiver
