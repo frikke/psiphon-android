@@ -228,7 +228,7 @@
     <!-- Personal Pairing unsupported token version error message -->
     <string name="personal_pairing_unsupported_version">Unsupported pairing token version</string>
 
-    <!-- A warning message shown when the user tries to ebable Personal Pairing while the pairing compartment ID is not set -->
+    <!-- A warning message shown when the user tries to enable Personal Pairing while the pairing compartment ID is not set -->
     <string name="personal_pairing_need_compartment_id">Please import a pairing URL first</string>
 
     <!-- Personal Pairing Compartment ID setting title -->

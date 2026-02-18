@@ -214,8 +214,12 @@ public class MainActivityViewModel extends AndroidViewModel implements DefaultLi
 
                     if (lastKnownPersonalPairingState != null) {
                         boolean enableChanged = lastKnownPersonalPairingState.enabled != currentState.enabled;
+                        String previousCompartmentId =
+                                lastKnownPersonalPairingState.data == null ? null : lastKnownPersonalPairingState.data.compartmentId;
+                        String currentCompartmentId =
+                                currentState.data == null ? null : currentState.data.compartmentId;
                         boolean compartmentChanged = lastKnownPersonalPairingState.enabled && currentState.enabled &&
-                                !Objects.equals(lastKnownPersonalPairingState.data.compartmentId, currentState.data.compartmentId);
+                                !Objects.equals(previousCompartmentId, currentCompartmentId);
 
                         shouldRestart = enableChanged || compartmentChanged;
                     }

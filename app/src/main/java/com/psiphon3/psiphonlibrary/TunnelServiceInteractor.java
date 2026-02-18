@@ -353,8 +353,6 @@ public class TunnelServiceInteractor {
                                 .setHomePages(state.homePages)
                                 .setVpnMode(state.vpnMode)
                                 .setVpnApps(state.vpnApps)
-                                .setVpnMode(state.vpnMode)
-                                .setVpnApps(state.vpnApps)
                                 .setPersonalPairingEnabled(state.isPersonalPairingMode)
                                 .build();
                         tunnelState = TunnelState.running(connectionData);
