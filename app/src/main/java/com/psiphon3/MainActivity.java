@@ -1000,7 +1000,7 @@ public class MainActivity extends LocalizedActivities.AppCompatActivity {
         }
     }
 
-    // Handles deep links and app links
+    // Handles deep links
     private boolean handleDeepLinkIntent(@NonNull Intent intent) {
         final String FWD_SLASH = "/";
 
@@ -1011,9 +1011,6 @@ public class MainActivity extends LocalizedActivities.AppCompatActivity {
         final String SETTINGS_PATH_PROXY = "/proxy";
         final String SETTINGS_PATH_MORE_OPTIONS = "/more-options";
         final String PAIR_HOST = "pair";
-        final String PAIR_PATH_PREFIX = "/pair";
-        final String HTTPS_SCHEME = "https";
-        final String APP_LINK_HOST = "hextempulant.net";
 
         Uri intentUri = intent.getData();
         // Check if the intent is a view action and has a valid URI
@@ -1026,22 +1023,7 @@ public class MainActivity extends LocalizedActivities.AppCompatActivity {
         String host = intentUri.getHost();
         String path = intentUri.getPath();
 
-        // Handle Personal Pairing app links (https://hextempulant.net/pair/<token>) first
-        if (HTTPS_SCHEME.equals(scheme) && APP_LINK_HOST.equals(host)) {
-            // Only process paths that start with /pair/
-            if (path != null && path.startsWith(PAIR_PATH_PREFIX + FWD_SLASH)) {
-                if (!intentUri.getPathSegments().isEmpty() && intentUri.getPathSegments().size() > 1) {
-                    handlePersonalPairingData(intentUri.toString());
-                    // Intent was handled
-                    return true;
-                }
-                MyLog.w("MainActivity::handleDeepLinkIntent: empty pairing data in URL");
-                // Intent was not handled
-                return false;
-            }
-        }
-
-        // Handle Personal Pairing deep links (psiphon://pair/<token>) next
+        // Handle Personal Pairing deep links (psiphon://pair/<token>)
         if (PSIPHON_SCHEME.equals(scheme) && PAIR_HOST.equals(host)) {
             // Return false if path is missing or invalid
             if (path == null || path.length() <= 1) {
@@ -1081,7 +1063,7 @@ public class MainActivity extends LocalizedActivities.AppCompatActivity {
         return false;
     }
 
-    // Handles personal pairing data import from deep / app links
+    // Handles personal pairing data import from deep links
     private void handlePersonalPairingData(String input) {
         Flowable<TunnelState> tunnelStateFlowable = getTunnelServiceInteractor()
                 .tunnelStateFlowable()

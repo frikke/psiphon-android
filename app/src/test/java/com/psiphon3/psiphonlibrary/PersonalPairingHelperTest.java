@@ -20,7 +20,7 @@ public class PersonalPairingHelperTest {
     private static final String MALFORMED_TOKEN = "not-base64-token!!";
 
     private static final String VALID_DEEP_LINK = "psiphon://pair/" + VALID_TOKEN_BASE64URL;
-    private static final String VALID_WRAPPER_URL = "https://hextempulant.net/pair/" + VALID_TOKEN_BASE64URL;
+    private static final String VALID_WRAPPER_URL = "https://example.net/pair/" + VALID_TOKEN_BASE64URL;
 
     @Test
     public void extractPersonalPairingData_acceptsRawToken() {
@@ -80,7 +80,7 @@ public class PersonalPairingHelperTest {
                 "psiphon://pair/" + VALID_TOKEN_BASE64URL + "/extra",
                 PersonalPairingHelper.ImportValidationError.INVALID_INPUT_FORMAT);
         assertValidationError(
-                "https://hextempulant.net/pair/" + VALID_TOKEN_BASE64URL + "/extra",
+                "https://example.net/pair/" + VALID_TOKEN_BASE64URL + "/extra",
                 PersonalPairingHelper.ImportValidationError.INVALID_INPUT_FORMAT);
     }
 
