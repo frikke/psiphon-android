@@ -61,7 +61,7 @@ public class PersonalPairingHelper {
     private static final String NAME_KEY = "name";
     private static final Pattern BASE64URL_PATTERN = Pattern.compile("^[A-Za-z0-9_-]+$");
     private static final Pattern BASE64_PATTERN = Pattern.compile("^[A-Za-z0-9+/]+={0,2}$");
-    private static final Pattern COMPARTMENT_ID_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{43}$");
+    private static final Pattern COMPARTMENT_ID_STANDARD_PATTERN = Pattern.compile("^[A-Za-z0-9+/]{43}$");
     private static final JsonFactory JSON_FACTORY = new JsonFactory();
 
     public enum ImportValidationError {
@@ -134,6 +134,15 @@ public class PersonalPairingHelper {
     private final AppPreferences prefs;
     private final Context context;
 
+    public static String toStandardBase64CompartmentId(String compartmentId) {
+        if (compartmentId == null) {
+            return null;
+        }
+        return compartmentId
+                .replace('-', '+')
+                .replace('_', '/');
+    }
+
     public PersonalPairingHelper(Context context) {
         this.context = context;
         this.prefs = new AppPreferences(context);
@@ -150,7 +159,7 @@ public class PersonalPairingHelper {
 
         PersonalPairingData data = null;
         if (compartmentId != null && !compartmentId.isEmpty()) {
-            data = new PersonalPairingData(compartmentId, alias != null ? alias : "");
+            data = new PersonalPairingData(toStandardBase64CompartmentId(compartmentId), alias != null ? alias : "");
         }
 
         return new PersonalPairingState(enabled, data);
@@ -176,13 +185,18 @@ public class PersonalPairingHelper {
         if (data == null) {
             return;
         }
+
+        PersonalPairingData normalizedData = new PersonalPairingData(
+                toStandardBase64CompartmentId(data.compartmentId),
+                data.alias);
+
         PersonalPairingState currentState = personalPairingStateRelay.getValue();
         if (currentState != null && (currentState.enabled != enabled ||
-                !Objects.equals(currentState.data, data))) {
+                !Objects.equals(currentState.data, normalizedData))) {
             prefs.put(context.getString(R.string.personalPairingEnabledPreference), enabled);
-            prefs.put(context.getString(R.string.personalPairingCompartmentIdPreference), data.compartmentId);
-            prefs.put(context.getString(R.string.personalPairingAliasPreference), data.alias);
-            personalPairingStateRelay.accept(PersonalPairingState.create(enabled, data));
+            prefs.put(context.getString(R.string.personalPairingCompartmentIdPreference), normalizedData.compartmentId);
+            prefs.put(context.getString(R.string.personalPairingAliasPreference), normalizedData.alias);
+            personalPairingStateRelay.accept(PersonalPairingState.create(enabled, normalizedData));
         }
     }
 
@@ -441,8 +455,8 @@ public class PersonalPairingHelper {
                 throw unsupportedVersion();
             }
 
-            validateCompartmentId(compartmentId);
-            return new PersonalPairingData(compartmentId, alias);
+            String normalizedCompartmentId = validateAndNormalizeCompartmentId(compartmentId);
+            return new PersonalPairingData(normalizedCompartmentId, alias);
         } catch (PersonalPairingImportException e) {
             throw e;
         } catch (IOException | RuntimeException e) {
@@ -450,19 +464,23 @@ public class PersonalPairingHelper {
         }
     }
 
-    private static void validateCompartmentId(String compartmentId) {
-        if (!COMPARTMENT_ID_PATTERN.matcher(compartmentId).matches()) {
+    private static String validateAndNormalizeCompartmentId(String compartmentId) {
+        if (!COMPARTMENT_ID_STANDARD_PATTERN.matcher(compartmentId).matches()) {
             throw malformedToken();
         }
 
+        String normalizedCompartmentId = toStandardBase64CompartmentId(compartmentId);
+
         try {
-            byte[] decoded = decodeUrlSafeBase64(compartmentId);
+            byte[] decoded = decodeUrlSafeBase64(normalizedCompartmentId);
             if (decoded.length != 32) {
                 throw malformedToken();
             }
         } catch (IllegalArgumentException e) {
             throw malformedToken(e);
         }
+
+        return normalizedCompartmentId;
     }
 
     private static byte[] decodeUrlSafeBase64(String token) {

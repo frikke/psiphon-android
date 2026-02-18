@@ -7,15 +7,13 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
 public class PersonalPairingHelperTest {
-    private static final String EXPECTED_COMPARTMENT_ID = "jgr-fj3yz6Wpn_vV7qlP4Sh-hBkThZCDEe6-OVJEm2g";
+    private static final String EXPECTED_COMPARTMENT_ID = "jgr+fj3yz6Wpn/vV7qlP4Sh+hBkThZCDEe6+OVJEm2g";
     private static final String EXPECTED_ALIAS = "mattereaterlad's conduit";
 
-    // spec/fixtures/pairing/token-v1.valid.base64url.txt
-    private static final String VALID_TOKEN_BASE64URL = "eyJ2IjoiMSIsImRhdGEiOnsiaWQiOiJqZ3ItZmozeXo2V3BuX3ZWN3FsUDRTaC1oQmtUaFpDREVlNi1PVkpFbTJnIiwibmFtZSI6Im1hdHRlcmVhdGVybGFkJ3MgY29uZHVpdCJ9fQ";
-    // spec/fixtures/pairing/token-v1.valid.base64.txt
-    private static final String VALID_TOKEN_BASE64 = "eyJ2IjoiMSIsImRhdGEiOnsiaWQiOiJqZ3ItZmozeXo2V3BuX3ZWN3FsUDRTaC1oQmtUaFpDREVlNi1PVkpFbTJnIiwibmFtZSI6Im1hdHRlcmVhdGVybGFkJ3MgY29uZHVpdCJ9fQ==";
-    // spec/fixtures/pairing/token-v2.unsupported.base64url.txt
-    private static final String UNSUPPORTED_VERSION_TOKEN = "eyJ2IjoiMiIsImRhdGEiOnsiaWQiOiJqZ3ItZmozeXo2V3BuX3ZWN3FsUDRTaC1oQmtUaFpDREVlNi1PVkpFbTJnIiwibmFtZSI6Im1hdHRlcmVhdGVybGFkJ3MgY29uZHVpdCJ9fQ";
+    private static final String VALID_TOKEN_BASE64URL = "eyJ2IjoiMSIsImRhdGEiOnsiaWQiOiJqZ3IrZmozeXo2V3BuL3ZWN3FsUDRTaCtoQmtUaFpDREVlNitPVkpFbTJnIiwibmFtZSI6Im1hdHRlcmVhdGVybGFkJ3MgY29uZHVpdCJ9fQ";
+    private static final String VALID_TOKEN_BASE64 = "eyJ2IjoiMSIsImRhdGEiOnsiaWQiOiJqZ3IrZmozeXo2V3BuL3ZWN3FsUDRTaCtoQmtUaFpDREVlNitPVkpFbTJnIiwibmFtZSI6Im1hdHRlcmVhdGVybGFkJ3MgY29uZHVpdCJ9fQ==";
+    private static final String UNSUPPORTED_VERSION_TOKEN = "eyJ2IjoiMiIsImRhdGEiOnsiaWQiOiJqZ3IrZmozeXo2V3BuL3ZWN3FsUDRTaCtoQmtUaFpDREVlNitPVkpFbTJnIiwibmFtZSI6Im1hdHRlcmVhdGVybGFkJ3MgY29uZHVpdCJ9fQ";
+    private static final String URLSAFE_COMPARTMENT_ID_TOKEN = "eyJ2IjoiMSIsImRhdGEiOnsiaWQiOiJqZ3ItZmozeXo2V3BuX3ZWN3FsUDRTaC1oQmtUaFpDREVlNi1PVkpFbTJnIiwibmFtZSI6Im1hdHRlcmVhdGVybGFkJ3MgY29uZHVpdCJ9fQ";
     // spec/fixtures/pairing/token.malformed.txt
     private static final String MALFORMED_TOKEN = "not-base64-token!!";
 
@@ -72,6 +70,13 @@ public class PersonalPairingHelperTest {
     public void extractPersonalPairingData_acceptsNestedPairPath() {
         assertExpectedData(PersonalPairingHelper.extractPersonalPairingData(
                 "https://dynamic.example.com/api/v2/pair/" + VALID_TOKEN_BASE64URL + "?utm_source=test#fragment"));
+    }
+
+    @Test
+    public void extractPersonalPairingData_rejectsUrlSafeCompartmentId() {
+        assertValidationError(
+                URLSAFE_COMPARTMENT_ID_TOKEN,
+                PersonalPairingHelper.ImportValidationError.MALFORMED_TOKEN);
     }
 
     @Test

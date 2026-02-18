@@ -546,6 +546,7 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
             String compartmentId = "";
             if (personalPairingModePreference) {
                 compartmentId = multiProcessPreferences.getString(getContext().getString(R.string.personalPairingCompartmentIdPreference), "");
+                compartmentId = PersonalPairingHelper.toStandardBase64CompartmentId(compartmentId);
                 if (TextUtils.isEmpty(compartmentId)) {
                     MyLog.w("TunnelManager::getTunnelConfigSingle: personal pairing is enabled but the compartment ID is empty.");
                 }
