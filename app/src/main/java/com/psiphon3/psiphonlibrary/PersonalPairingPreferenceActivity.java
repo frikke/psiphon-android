@@ -68,6 +68,7 @@ public class PersonalPairingPreferenceActivity extends LocalizedActivities.AppCo
         private EditTextPreference aliasPref;
         private Preference resetPref;
         private Toast currentToast;
+        private PersonalPairingHelper personalPairingHelper;
 
         @Override
         public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
@@ -81,6 +82,7 @@ public class PersonalPairingPreferenceActivity extends LocalizedActivities.AppCo
             compartmentIdPref = preferences.findPreference(getString(R.string.personalPairingCompartmentIdPreference));
             aliasPref = preferences.findPreference(getString(R.string.personalPairingAliasPreference));
             resetPref = preferences.findPreference(getString(R.string.personalPairingResetPreference));
+            personalPairingHelper = new PersonalPairingHelper(requireContext());
 
             // Set initial values from current preferences
             final PreferenceGetter preferenceGetter = getPreferenceGetter();
@@ -220,6 +222,24 @@ public class PersonalPairingPreferenceActivity extends LocalizedActivities.AppCo
             compartmentIdPref.setText(data.compartmentId);
             aliasPref.setText(data.alias);
             updatePersonalPairingPreferencesUI();
+            persistPersonalPairingState();
+        }
+
+        private void persistPersonalPairingState() {
+            String compartmentId = compartmentIdPref.getText();
+            String alias = aliasPref.getText();
+            boolean enabled = enabledPref.isChecked();
+
+            if (compartmentId == null) {
+                compartmentId = "";
+            }
+            if (alias == null) {
+                alias = "";
+            }
+
+            personalPairingHelper.setPersonalPairingState(
+                    enabled,
+                    new PersonalPairingHelper.PersonalPairingData(compartmentId, alias));
         }
 
         private void updatePersonalPairingPreferencesUI() {
@@ -283,6 +303,7 @@ public class PersonalPairingPreferenceActivity extends LocalizedActivities.AppCo
         @Override
         public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
             updatePersonalPairingPreferencesUI();
+            persistPersonalPairingState();
         }
     }
 }

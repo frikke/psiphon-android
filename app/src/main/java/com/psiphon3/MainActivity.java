@@ -44,6 +44,7 @@ import android.text.Spanned;
 import android.text.TextUtils;
 import android.text.style.BulletSpan;
 import android.text.util.Linkify;
+import android.util.Pair;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.Menu;
@@ -488,19 +489,22 @@ public class MainActivity extends LocalizedActivities.AppCompatActivity {
                 Flowable.combineLatest(
                                 getTunnelServiceInteractor().tunnelStateFlowable(),
                                 viewModel.personalPairingStateFlowable(),
-                                (tunnelState, personalPairingEnabled) -> {
-                                    // If personal pairing is enabled, override everything else
-                                    if (personalPairingEnabled.enabled) {
-                                        updatePsiphonBumpHceState(false);
-                                        helpConnectFab.setVisibility(View.GONE);
-                                        helpConnectFab.setOnClickListener(null);
-                                        } else {
-                                        // Otherwise process normal tunnel state
-                                        updatePsiphonBumpState(tunnelState);
-                                    }
-                                    return tunnelState; // return tunnel state for further processing if needed
-                                })
+                                Pair::new)
                         .observeOn(AndroidSchedulers.mainThread())
+                        .doOnNext(statePair -> {
+                            TunnelState tunnelState = statePair.first;
+                            PersonalPairingHelper.PersonalPairingState personalPairingState = statePair.second;
+
+                            // If personal pairing is enabled, override everything else.
+                            if (personalPairingState.enabled) {
+                                updatePsiphonBumpHceState(false);
+                                helpConnectFab.setVisibility(View.GONE);
+                                helpConnectFab.setOnClickListener(null);
+                            } else {
+                                // Otherwise process normal tunnel state.
+                                updatePsiphonBumpState(tunnelState);
+                            }
+                        })
                         .doOnCancel(() -> {
                             updatePsiphonBumpHceState(false);
                             helpConnectFab.setVisibility(View.GONE);
