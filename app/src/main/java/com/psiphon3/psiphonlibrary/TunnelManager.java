@@ -39,7 +39,9 @@ import android.net.VpnService.Builder;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.IBinder;
+import android.os.Looper;
 import android.os.Message;
 import android.os.Messenger;
 import android.os.RemoteException;
@@ -216,6 +218,10 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
         m_context = parentService;
         m_isStopping = new AtomicBoolean(false);
         unsafeTrafficSubjects = new ArrayList<>();
+        m_incomingMessageHandlerThread = new HandlerThread("TunnelManagerIncomingMessageHandler");
+        m_incomingMessageHandlerThread.start();
+        m_incomingMessenger = new Messenger(
+                new IncomingMessageHandler(m_incomingMessageHandlerThread.getLooper(), this));
     }
 
     void onCreate() {
@@ -414,6 +420,12 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
         m_compositeDisposable.dispose();
         // Unregister host service for the VPN manager
         m_vpnManager.unregisterHostService();
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+            m_incomingMessageHandlerThread.quitSafely();
+        } else {
+            m_incomingMessageHandlerThread.quit();
+        }
     }
 
     void onRevoke() {
@@ -709,8 +721,8 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
         }
     }
 
-    private final Messenger m_incomingMessenger = new Messenger(
-            new IncomingMessageHandler(this));
+    private final HandlerThread m_incomingMessageHandlerThread;
+    private final Messenger m_incomingMessenger;
     private final HashMap<Integer, MessengerWrapper> mClients = new HashMap<>();
 
 
@@ -718,7 +730,8 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
         private final WeakReference<TunnelManager> mTunnelManager;
         private final ClientToServiceMessage[] csm = ClientToServiceMessage.values();
 
-        IncomingMessageHandler(TunnelManager manager) {
+        IncomingMessageHandler(Looper looper, TunnelManager manager) {
+            super(looper);
             mTunnelManager = new WeakReference<>(manager);
         }
 
@@ -749,27 +762,33 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
                                 return;
                             }
                         }
-                        manager.mClients.put(msg.replyTo.hashCode(), client);
+                        synchronized (manager.mClients) {
+                            manager.mClients.put(msg.replyTo.hashCode(), client);
+                        }
                         manager.m_newClientPublishRelay.accept(new Object());
                     }
                     break;
 
                 case UNREGISTER:
                     if (manager != null) {
-                        manager.mClients.remove(msg.replyTo.hashCode());
+                        synchronized (manager.mClients) {
+                            manager.mClients.remove(msg.replyTo.hashCode());
+                        }
                     }
                     break;
 
                 case STOP_SERVICE:
                     if (manager != null) {
                         // Ignore the message if the sender is not registered
-                        if (manager.mClients.get(msg.replyTo.hashCode()) == null) {
-                            return;
+                        synchronized (manager.mClients) {
+                            if (manager.mClients.get(msg.replyTo.hashCode()) == null) {
+                                return;
+                            }
+                            // Do not send any more messages after a stop was commanded.
+                            // Client side will receive a ServiceConnection.onServiceDisconnected callback
+                            // when the service finally stops.
+                            manager.mClients.clear();
                         }
-                        // Do not send any more messages after a stop was commanded.
-                        // Client side will receive a ServiceConnection.onServiceDisconnected callback
-                        // when the service finally stops.
-                        manager.mClients.clear();
                         manager.signalStopService();
                     }
                     break;
@@ -777,8 +796,10 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
                 case RESTART_TUNNEL:
                     if (manager != null) {
                         // Ignore the message if the sender is not registered
-                        if (manager.mClients.get(msg.replyTo.hashCode()) == null) {
-                            return;
+                        synchronized (manager.mClients) {
+                            if (manager.mClients.get(msg.replyTo.hashCode()) == null) {
+                                return;
+                            }
                         }
 
                         // TODO: notify client that the tunnel is going to restart
@@ -798,8 +819,10 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
                 case CHANGED_LOCALE:
                     if (manager != null) {
                         // Ignore the message if the sender is not registered
-                        if (manager.mClients.get(msg.replyTo.hashCode()) == null) {
-                            return;
+                        synchronized (manager.mClients) {
+                            if (manager.mClients.get(msg.replyTo.hashCode()) == null) {
+                                return;
+                            }
                         }
                         setLocale(manager);
                     }
@@ -807,7 +830,10 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
 
                 case NFC_CONNECTION_INFO_EXCHANGE_EXPORT:
                     if (manager != null) {
-                        MessengerWrapper client = manager.mClients.get(msg.replyTo.hashCode());
+                        MessengerWrapper client;
+                        synchronized (manager.mClients) {
+                            client = manager.mClients.get(msg.replyTo.hashCode());
+                        }
                         if (client != null) {
                             String exportExchangePayload = manager.m_tunnel.exportExchangePayload();
                             Bundle bundle = new Bundle();
@@ -860,27 +886,31 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
 
     private void sendClientMessage(int what, Bundle data) {
         Message msg = composeClientMessage(what, data);
-        for (Iterator i = mClients.entrySet().iterator(); i.hasNext(); ) {
-            Map.Entry pair = (Map.Entry) i.next();
-            MessengerWrapper messenger = (MessengerWrapper) pair.getValue();
-            try {
-                messenger.send(msg);
-            } catch (RemoteException e) {
-                // The client is dead.  Remove it from the list;
-                i.remove();
+        synchronized (mClients) {
+            for (Iterator i = mClients.entrySet().iterator(); i.hasNext(); ) {
+                Map.Entry pair = (Map.Entry) i.next();
+                MessengerWrapper messenger = (MessengerWrapper) pair.getValue();
+                try {
+                    messenger.send(msg);
+                } catch (RemoteException e) {
+                    // The client is dead.  Remove it from the list;
+                    i.remove();
+                }
             }
         }
     }
 
     private boolean pingForActivity() {
         Message msg = composeClientMessage(ServiceToClientMessage.PING.ordinal(), null);
-        for (Map.Entry<Integer, MessengerWrapper> entry : mClients.entrySet()) {
-            MessengerWrapper messenger = entry.getValue();
-            if (messenger.isActivity) {
-                try {
-                    messenger.send(msg);
-                    return true;
-                } catch (RemoteException ignore) {
+        synchronized (mClients) {
+            for (Map.Entry<Integer, MessengerWrapper> entry : mClients.entrySet()) {
+                MessengerWrapper messenger = entry.getValue();
+                if (messenger.isActivity) {
+                    try {
+                        messenger.send(msg);
+                        return true;
+                    } catch (RemoteException ignore) {
+                    }
                 }
             }
         }
