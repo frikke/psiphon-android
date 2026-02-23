@@ -53,6 +53,7 @@ import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.content.PermissionChecker;
 
+import com.jakewharton.rxrelay2.BehaviorRelay;
 import com.jakewharton.rxrelay2.PublishRelay;
 import com.psiphon3.BuildConfig;
 import com.psiphon3.Location;
@@ -163,6 +164,7 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
 
     private void setTunnelConfig(Config config) {
         m_tunnelConfig = config;
+        m_desiredPersonalPairingModeRelay.accept(!TextUtils.isEmpty(config.personalPairingCompartmentId));
     }
 
     // Shared tunnel state, sent to the client in the HANDSHAKE
@@ -206,6 +208,7 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
     private PendingIntent m_notificationPendingIntent;
 
     private PublishRelay<TunnelState.ConnectionData.NetworkConnectionState> m_networkConnectionStatePublishRelay = PublishRelay.create();
+    private final BehaviorRelay<Boolean> m_desiredPersonalPairingModeRelay = BehaviorRelay.createDefault(false);
     private PublishRelay<Object> m_newClientPublishRelay = PublishRelay.create();
     private CompositeDisposable m_compositeDisposable = new CompositeDisposable();
     private VpnAppsUtils.VpnAppsExclusionSetting vpnAppsExclusionSetting = VpnAppsUtils.VpnAppsExclusionSetting.ALL_APPS;
@@ -324,7 +327,7 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
     // Sends handshake intent and tunnel state updates to the client Activity,
     // also updates service notification.
     private Disposable connectionStatusUpdaterDisposable() {
-        return connectionObservable()
+        Observable<TunnelState.ConnectionData.NetworkConnectionState> networkConnectionStateObservable = connectionObservable()
                 .switchMap(pair -> {
                     TunnelState.ConnectionData.NetworkConnectionState networkConnectionState = pair.first;
                     boolean isRoutingThroughTunnel = pair.second;
@@ -351,8 +354,16 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
                     }
                     return Observable.just(networkConnectionState);
                 })
-                .distinctUntilChanged()
-                .doOnNext(networkConnectionState -> {
+                .distinctUntilChanged();
+
+        return Observable.combineLatest(
+                        networkConnectionStateObservable,
+                        m_desiredPersonalPairingModeRelay.distinctUntilChanged(),
+                        ((BiFunction<TunnelState.ConnectionData.NetworkConnectionState, Boolean,
+                                Pair<TunnelState.ConnectionData.NetworkConnectionState, Boolean>>) Pair::new))
+                .doOnNext(stateAndPairingMode -> {
+                    TunnelState.ConnectionData.NetworkConnectionState networkConnectionState = stateAndPairingMode.first;
+                    m_tunnelState.isPersonalPairingMode = stateAndPairingMode.second;
                     m_tunnelState.networkConnectionState = networkConnectionState;
                     sendClientMessage(ServiceToClientMessage.TUNNEL_CONNECTION_STATE.ordinal(), getTunnelStateBundle());
                     // Don't update notification to CONNECTING, etc., when a stop was commanded.
@@ -580,6 +591,19 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
         return Single.zip(configSingle, geoHashSingle, zipper);
     }
 
+    private boolean getDesiredPersonalPairingModeFromPreferences() {
+        AppPreferences preferences = new AppPreferences(getContext());
+        boolean personalPairingEnabled = preferences.getBoolean(
+                getContext().getString(R.string.personalPairingEnabledPreference), false);
+        if (!personalPairingEnabled) {
+            return false;
+        }
+        String compartmentId = preferences.getString(
+                getContext().getString(R.string.personalPairingCompartmentIdPreference), "");
+        compartmentId = PersonalPairingHelper.toStandardBase64CompartmentId(compartmentId);
+        return !TextUtils.isEmpty(compartmentId);
+    }
+
     private Notification createNotification(
             boolean alert,
             TunnelState.ConnectionData.NetworkConnectionState networkConnectionState) {
@@ -661,7 +685,7 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
     }
 
     private boolean isPersonalPairingMode() {
-        return m_tunnelConfig != null && !TextUtils.isEmpty(m_tunnelConfig.personalPairingCompartmentId);
+        return Boolean.TRUE.equals(m_desiredPersonalPairingModeRelay.getValue());
     }
 
     /**
@@ -805,6 +829,7 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
                         // TODO: notify client that the tunnel is going to restart
                         //  rather than reporting tunnel is not connected?
                         manager.m_networkConnectionStatePublishRelay.accept(TunnelState.ConnectionData.NetworkConnectionState.CONNECTING);
+                        manager.m_desiredPersonalPairingModeRelay.accept(manager.getDesiredPersonalPairingModeFromPreferences());
                         manager.m_compositeDisposable.add(
                                 manager.getTunnelConfigSingle()
                                         .doOnSuccess(config -> {
