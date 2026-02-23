@@ -204,7 +204,6 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
     private PendingIntent m_notificationPendingIntent;
 
     private PublishRelay<TunnelState.ConnectionData.NetworkConnectionState> m_networkConnectionStatePublishRelay = PublishRelay.create();
-    private final PublishRelay<Boolean> m_isRoutingThroughTunnelPublishRelay = PublishRelay.create();
     private PublishRelay<Object> m_newClientPublishRelay = PublishRelay.create();
     private CompositeDisposable m_compositeDisposable = new CompositeDisposable();
     private VpnAppsUtils.VpnAppsExclusionSetting vpnAppsExclusionSetting = VpnAppsUtils.VpnAppsExclusionSetting.ALL_APPS;
@@ -331,7 +330,6 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
                             if (canSendIntentToActivity()) {
                                 m_vpnManager.routeThroughTunnel(m_tunnel.getLocalSocksProxyPort());
                                 sendHandshakeIntent();
-                                m_isRoutingThroughTunnelPublishRelay.accept(Boolean.TRUE);
                                 // Do not emit downstream if we are just started routing.
                                 return Observable.empty();
                             }
@@ -342,7 +340,6 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
                         }
                         // No intents to send, just route through tunnel.
                         m_vpnManager.routeThroughTunnel(m_tunnel.getLocalSocksProxyPort());
-                        m_isRoutingThroughTunnelPublishRelay.accept(Boolean.TRUE);
                         // Do not emit downstream if we are just started routing.
                         return Observable.empty();
                     }
@@ -370,7 +367,6 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
                 .doOnComplete(() -> {
                     m_vpnManager.routeThroughTunnel(m_tunnel.getLocalSocksProxyPort());
                     runnable.run();
-                    m_isRoutingThroughTunnelPublishRelay.accept(Boolean.TRUE);
                 })
                 // Cancel "Open Psiphon to keep connecting" when completed or disposed
                 .doFinally(this::cancelOpenAppToFinishConnectingNotification);
@@ -792,7 +788,6 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
                                 manager.getTunnelConfigSingle()
                                         .doOnSuccess(config -> {
                                             manager.m_vpnManager.stopRouteThroughTunnel();
-                                            manager.m_isRoutingThroughTunnelPublishRelay.accept(Boolean.FALSE);
                                             manager.setTunnelConfig(config);
                                             manager.onRestartTunnel();
                                         })
@@ -967,7 +962,6 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
 
         m_isStopping.set(false);
         m_networkConnectionStatePublishRelay.accept(TunnelState.ConnectionData.NetworkConnectionState.CONNECTING);
-        m_isRoutingThroughTunnelPublishRelay.accept(Boolean.FALSE);
 
         // Notify if an upgrade has already been downloaded and is waiting for install
         UpgradeManager.UpgradeInstaller.notifyUpgrade(getContext(), PsiphonTunnel.getDefaultUpgradeDownloadFilePath(getContext()));
@@ -1005,7 +999,6 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
 
             m_isStopping.set(true);
             m_networkConnectionStatePublishRelay.accept(TunnelState.ConnectionData.NetworkConnectionState.CONNECTING);
-            m_isRoutingThroughTunnelPublishRelay.accept(false);
             m_vpnManager.vpnTeardown();
             m_tunnel.stop();
 
@@ -1404,14 +1397,23 @@ public class TunnelManager implements PsiphonTunnel.HostService, VpnManager.VpnS
     // This observable emits a pair consisting of the latest NetworkConnectionState state and a
     // Boolean representing whether we are routing the traffic via tunnel.
     // Emits a new pair every time when either of the sources emits a new value.
+    // Note the lazy initialization and caching of the observable to emit the latest value
+    // immediately to the subscribers.
+    private Observable<Pair<TunnelState.ConnectionData.NetworkConnectionState, Boolean>> cachedConnectionObservable;
+
     private Observable<Pair<TunnelState.ConnectionData.NetworkConnectionState, Boolean>> connectionObservable() {
-        return Observable.combineLatest(m_networkConnectionStatePublishRelay,
-                        m_isRoutingThroughTunnelPublishRelay,
+        if (cachedConnectionObservable != null) {
+            return cachedConnectionObservable;
+        }
+        cachedConnectionObservable = Observable.combineLatest(m_networkConnectionStatePublishRelay,
+                        m_vpnManager.routingThroughTunnelObservable(),
                         ((BiFunction<TunnelState.ConnectionData.NetworkConnectionState, Boolean,
                                 Pair<TunnelState.ConnectionData.NetworkConnectionState, Boolean>>) Pair::new))
                 .subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
-                .distinctUntilChanged();
+                .distinctUntilChanged()
+                .replay(1).refCount();
+        return cachedConnectionObservable;
     }
 
     /**
